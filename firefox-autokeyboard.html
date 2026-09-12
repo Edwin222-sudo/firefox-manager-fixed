@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Firefox Remote</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+        iframe {
+            border: 0;
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+<iframe id="vnc" src="vnc.html?autoconnect=1&resize=remote&reconnect=1&show_dot=0&view_only=0"></iframe>
+<script>
+(function () {
+    var iframe = document.getElementById("vnc");
+    var injected = false;
+
+    function inject() {
+        if (injected) return;
+        try {
+            var doc = iframe.contentDocument || iframe.contentWindow.document;
+            if (!doc) return;
+
+            // Inject CSS to force keyboard button visible
+            var style = doc.createElement("style");
+            style.textContent = [
+                "#noVNC_keyboard_button { display: inline-block !important; visibility: visible !important; }",
+                "#noVNC_keyboardinput { opacity: 0; position: absolute; left: -9999px; }"
+            ].join("\n");
+            doc.head.appendChild(style);
+
+            // Wait for noVNC UI to be ready, then click keyboard button
+            var attempts = 0;
+            var timer = setInterval(function () {
+                attempts++;
+                var kbBtn = doc.getElementById("noVNC_keyboard_button");
+                if (kbBtn) {
+                    clearInterval(timer);
+                    kbBtn.click();
+                    injected = true;
+                    console.log("noVNC keyboard auto-opened");
+
+                    // Keep keyboard open if it gets hidden
+                    setInterval(function () {
+                        var panel = doc.getElementById("noVNC_keyboard");
+                        if (panel && panel.classList.contains("noVNC_hidden")) {
+                            kbBtn.click();
+                        }
+                    }, 1500);
+                }
+                if (attempts > 60) clearInterval(timer);
+            }, 500);
+        } catch (e) {
+            console.log("Injection error:", e);
+        }
+    }
+
+    iframe.addEventListener("load", function () {
+        setTimeout(inject, 1500);
+    });
+})();
+</script>
+</body>
+</html>
