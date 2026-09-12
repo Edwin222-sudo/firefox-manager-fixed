@@ -1,0 +1,276 @@
+#!/bin/sh
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+# File to store current size
+SIZE_FILE="/tmp/firefox_size.txt"
+
+# Wrapper HTML path
+WRAPPER_HTML="/root/firefox-autokeyboard.html"
+
+show_header() {
+    clear
+    echo "${BLUE}╔════════════════════════════════════════╗${NC}"
+    echo "${BLUE}║   🦊 Firefox Manager (Auto Keyboard)  ║${NC}"
+    echo "${BLUE}╚════════════════════════════════════════╝${NC}"
+    echo ""
+}
+
+get_current_size() {
+    if docker ps | grep -q firefox-kiosk; then
+        local size=$(docker exec firefox-kiosk sh -c 'echo $DISPLAY_WIDTH 2>/dev/null' 2>/dev/null)
+        local height=$(docker exec firefox-kiosk sh -c 'echo $DISPLAY_HEIGHT 2>/dev/null' 2>/dev/null)
+        if [ ! -z "$size" ] && [ ! -z "$height" ]; then
+            echo "${size}x${height}"
+            return
+        fi
+        size=$(docker inspect firefox-kiosk --format='{{range .Config.Env}}{{println .}}{{end}}' | grep DISPLAY_WIDTH | cut -d'=' -f2)
+        height=$(docker inspect firefox-kiosk --format='{{range .Config.Env}}{{println .}}{{end}}' | grep DISPLAY_HEIGHT | cut -d'=' -f2)
+        if [ ! -z "$size" ] && [ ! -z "$height" ]; then
+            echo "${size}x${height}"
+            return
+        fi
+        if [ -f "$SIZE_FILE" ]; then
+            cat "$SIZE_FILE"
+            return
+        fi
+        echo "Unknown"
+    else
+        echo "Stopped"
+    fi
+}
+
+show_menu() {
+    echo "${YELLOW}Current Status:${NC}"
+    if docker ps | grep -q firefox-kiosk; then
+        echo "${GREEN}✅ Firefox is RUNNING${NC}"
+        CURRENT_SIZE=$(get_current_size)
+        echo "📱 Current size: $CURRENT_SIZE"
+    else
+        echo "${RED}❌ Firefox is STOPPED${NC}"
+    fi
+    echo ""
+    echo "${BLUE}Select an option:${NC}"
+    echo "1) 📱 iPhone 17 (393x852)"
+    echo "2) 📱 iPhone 16 (393x852)"
+    echo "3) 📱 iPhone 15 (393x852)"
+    echo "4) 📱 iPhone 13 (390x844)"
+    echo "5) 💻 MacBook (1440x900)"
+    echo "6) 💻 MacBook Pro (1680x1050)"
+    echo "7) 🖥️ Desktop (1920x1080)"
+    echo "8) 📊 Tablet (1024x1366)"
+    echo "9) ⭐ Your Favorite (440x956)"
+    echo "10) ✏️ Custom Size"
+    echo "11) 🔄 Restart Firefox"
+    echo "12) 🛑 Stop Firefox"
+    echo "13) 🗑️ Remove Container"
+    echo "14) 📋 Show Logs"
+    echo "0) ❌ Exit"
+    echo ""
+}
+
+check_wrapper_file() {
+    if [ ! -f "$WRAPPER_HTML" ]; then
+        echo "${RED}❌ ERROR: Wrapper file not found at $WRAPPER_HTML${NC}"
+        echo "${YELLOW}Please create it first using the instructions provided.${NC}"
+        return 1
+    fi
+    return 0
+}
+
+fix_display_resolution() {
+    local width=$1
+    local height=$2
+    echo "${YELLOW}Applying display resolution fixes...${NC}"
+    docker exec firefox-kiosk sh -c '
+        export DISPLAY=:0
+        if command -v xrandr > /dev/null 2>&1; then
+            WIDTH='"$width"'
+            HEIGHT='"$height"'
+            xrandr --output default --mode ${WIDTH}x${HEIGHT} 2>/dev/null || true
+            echo "Resolution set to ${WIDTH}x${HEIGHT}"
+        fi
+        if command -v wmctrl > /dev/null 2>&1; then
+            sleep 2
+            wmctrl -r "Firefox" -e 0,0,0,'"$width"','"$height"' 2>/dev/null || true
+        fi
+    ' 2>/dev/null
+    echo "${GREEN}✅ Display fixes applied${NC}"
+}
+
+switch_device() {
+    local device=$1
+    local width=$2
+    local height=$3
+
+    echo "${YELLOW}Switching to $device (${width}x${height})...${NC}"
+
+    # Verify wrapper file exists before proceeding
+    if ! check_wrapper_file; then
+        return 1
+    fi
+
+    docker stop firefox-kiosk 2>/dev/null
+    docker rm firefox-kiosk 2>/dev/null
+
+    echo "${width}x${height}" > "$SIZE_FILE"
+
+    if [ "$width" -le 500 ]; then
+        docker run -d \
+            --name=firefox-kiosk \
+            --restart unless-stopped \
+            -p 80:5800 \
+            -e FF_OPEN_URL="https://gmail.com/" \
+            -e FF_KIOSK=1 \
+            -e DISPLAY_WIDTH="$width" \
+            -e DISPLAY_HEIGHT="$height" \
+            -e DISPLAY_NUM=0 \
+            -e DISPLAY_REFRESH=60 \
+            -e KEEP_APP_RUNNING=1 \
+            -e TZ=Africa/Nairobi \
+            -e VNC_SCREEN=0 \
+            -e VNC_RESOLUTION="${width}x${height}" \
+            -e FF_ZOOM_LEVEL="100" \
+            -e FF_DPI=96 \
+            -v /root/firefox_data:/config:rw \
+            -v /root/firefox-autokeyboard.html:/opt/noVNC/index.html:ro \
+            --shm-size=2g \
+            --memory="2g" \
+            --cpus="1" \
+            jlesage/firefox
+    else
+        docker run -d \
+            --name=firefox-kiosk \
+            --restart unless-stopped \
+            -p 80:5800 \
+            -e FF_OPEN_URL="https://gmail.com/" \
+            -e FF_KIOSK=1 \
+            -e DISPLAY_WIDTH="$width" \
+            -e DISPLAY_HEIGHT="$height" \
+            -e DISPLAY_NUM=0 \
+            -e DISPLAY_REFRESH=60 \
+            -e KEEP_APP_RUNNING=1 \
+            -e TZ=Africa/Nairobi \
+            -e VNC_SCREEN=0 \
+            -e VNC_RESOLUTION="${width}x${height}" \
+            -e FF_ZOOM_LEVEL="100" \
+            -e FF_DPI=96 \
+            -v /root/firefox_data:/config:rw \
+            -v /root/firefox-autokeyboard.html:/opt/noVNC/index.html:ro \
+            --shm-size=2g \
+            --memory="4g" \
+            --cpus="2" \
+            jlesage/firefox
+    fi
+
+    if [ $? -eq 0 ]; then
+        echo "${GREEN}✅ Firefox started with $device settings${NC}"
+        echo "🌐 Access at: http://YOUR_VPS_IP:80"
+        echo "📱 Resolution: ${width}x${height}"
+
+        echo "${YELLOW}Waiting for Firefox to initialize...${NC}"
+        sleep 10
+
+        fix_display_resolution "$width" "$height"
+
+        if [ "$width" -le 500 ]; then
+            echo "${YELLOW}Applying mobile optimizations...${NC}"
+            docker exec firefox-kiosk sh -c '
+                export DISPLAY=:0
+                sleep 3
+                if command -v xdotool > /dev/null 2>&1; then
+                    WINDOW_ID=$(xdotool search --onlyvisible --class "firefox" | head -1)
+                    if [ ! -z "$WINDOW_ID" ]; then
+                        xdotool windowsize $WINDOW_ID '"$width"' '"$height"'
+                        xdotool windowmove $WINDOW_ID 0 0
+                    fi
+                fi
+                if command -v wmctrl > /dev/null 2>&1; then
+                    sleep 2
+                    wmctrl -r "Firefox" -e 0,0,0,'"$width"','"$height"' 2>/dev/null || true
+                fi
+            ' 2>/dev/null
+        fi
+
+        echo "${GREEN}✅ Auto keyboard wrapper mounted${NC}"
+        echo "🔄 Open http://YOUR_VPS_IP:80 — the keyboard should appear automatically"
+        echo ""
+        echo "${GREEN}✅ Current size saved: ${width}x${height}${NC}"
+    else
+        echo "${RED}❌ Failed to start Firefox${NC}"
+    fi
+}
+
+# Main loop
+while true; do
+    show_header
+    show_menu
+    printf "Enter your choice: "
+    read choice
+
+    case $choice in
+        1) switch_device "iphone17" 393 852 ;;
+        2) switch_device "iphone16" 393 852 ;;
+        3) switch_device "iphone15" 393 852 ;;
+        4) switch_device "iphone13" 390 844 ;;
+        5) switch_device "macbook" 1440 900 ;;
+        6) switch_device "macbook-pro" 1680 1050 ;;
+        7) switch_device "desktop" 1920 1080 ;;
+        8) switch_device "tablet" 1024 1366 ;;
+        9) switch_device "favorite" 440 956 ;;
+        10)
+            printf "Enter width: "
+            read width
+            printf "Enter height: "
+            read height
+            if echo "$width" | grep -q '^[0-9]\+$' && echo "$height" | grep -q '^[0-9]\+$'; then
+                switch_device "custom" "$width" "$height"
+            else
+                echo "${RED}Invalid dimensions${NC}"
+            fi
+            ;;
+        11)
+            docker restart firefox-kiosk
+            echo "${GREEN}✅ Firefox restarted${NC}"
+            sleep 8
+            if [ -f "$SIZE_FILE" ]; then
+                CURRENT_SIZE=$(cat "$SIZE_FILE")
+                WIDTH=$(echo "$CURRENT_SIZE" | cut -d'x' -f1)
+                HEIGHT=$(echo "$CURRENT_SIZE" | cut -d'x' -f2)
+                if [ ! -z "$WIDTH" ] && [ ! -z "$HEIGHT" ]; then
+                    fix_display_resolution "$WIDTH" "$HEIGHT"
+                fi
+            fi
+            ;;
+        12)
+            docker stop firefox-kiosk
+            echo "${YELLOW}⚠️ Firefox stopped${NC}"
+            ;;
+        13)
+            docker stop firefox-kiosk 2>/dev/null
+            docker rm firefox-kiosk 2>/dev/null
+            rm -f "$SIZE_FILE"
+            echo "${YELLOW}⚠️ Container removed${NC}"
+            ;;
+        14)
+            docker logs --tail 50 firefox-kiosk
+            printf "\nPress Enter to continue..."
+            read dummy
+            ;;
+        0)
+            echo "${GREEN}Goodbye!${NC}"
+            exit 0
+            ;;
+        *)
+            echo "${RED}Invalid option${NC}"
+            ;;
+    esac
+
+    printf "Press Enter to continue..."
+    read dummy
+done
